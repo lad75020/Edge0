@@ -8,6 +8,9 @@
 
 [![Hugging Face](https://img.shields.io/badge/%F0%9F%A4%97%20Hugging%20Face-Edge0--35B--A3B--preview-yellow?style=for-the-badge)](https://huggingface.co/Edge0/Edge0-35B-A3B-preview)
 [![Hugging Face](https://img.shields.io/badge/%F0%9F%A4%97%20Hugging%20Face-Edge0--8B--A1B--preview-yellow?style=for-the-badge)](https://huggingface.co/Edge0/Edge0-8B-A1B-preview)
+[![ModelScope](https://img.shields.io/badge/ModelScope-Edge0--35B--A3B--preview-624AFF?style=for-the-badge)](https://www.modelscope.cn/models/Edge0/Edge0-35B-A3B-preview)
+[![ModelScope](https://img.shields.io/badge/ModelScope-Edge0--8B--A1B--preview-624AFF?style=for-the-badge)](https://www.modelscope.cn/models/Edge0/Edge0-8B-A1B-preview)
+[![arXiv](https://img.shields.io/badge/arXiv-2609.18063-B31B1B?style=for-the-badge&logo=arxiv&logoColor=white)](https://arxiv.org/abs/2609.18063)
 [![GitHub](https://img.shields.io/badge/GitHub-Edge0--AI%2FEdge0-black?style=for-the-badge&logo=github)](https://github.com/Edge0-AI/Edge0)
 [![License](https://img.shields.io/badge/License-Apache%202.0-blue?style=for-the-badge)](LICENSE)
 
@@ -24,8 +27,8 @@ Gemma 4 与 Muse Glimmer，以及精确门控路由的 Ornith MLX checkpoint。
 
 | 档位 | 发布 checkpoint | 推理档 |
 |---|---|---|
-| `edge0-35b` | [`Edge0/Edge0-35B-A3B-preview`](https://huggingface.co/Edge0/Edge0-35B-A3B-preview) | 4bit，40 层，256 专家，prerouter K=4 |
-| `edge0-8b` | [`Edge0/Edge0-8B-A1B-preview`](https://huggingface.co/Edge0/Edge0-8B-A1B-preview) | 4bit，24 层，128 专家，prerouter K=8 |
+| `edge0-35b` | [`Edge0/Edge0-35B-A3B-preview`](https://huggingface.co/Edge0/Edge0-35B-A3B-preview) · [ModelScope](https://www.modelscope.cn/models/Edge0/Edge0-35B-A3B-preview) | 4bit，40 层，256 专家，prerouter K=4 |
+| `edge0-8b` | [`Edge0/Edge0-8B-A1B-preview`](https://huggingface.co/Edge0/Edge0-8B-A1B-preview) · [ModelScope](https://www.modelscope.cn/models/Edge0/Edge0-8B-A1B-preview) | 4bit，24 层，128 专家，prerouter K=8 |
 | `gemma-4:31b-mlx` | [`mlx-community/gemma-4-31b-4bit`](https://huggingface.co/mlx-community/gemma-4-31b-4bit) | 4bit 稠密模型，60 层常驻文本架构 |
 | `muse-glimmer:30b-mlx` | [`mlx-community/Muse-Glimmer-30B-4bit`](https://huggingface.co/mlx-community/Muse-Glimmer-30B-4bit) | 4bit 稠密模型，52 层文本架构，MLX 常驻推理 |
 | `ornith:35b-mlx` | [`mlx-community/Ornith-1.0-35B-4bit`](https://huggingface.co/mlx-community/Ornith-1.0-35B-4bit) | 4bit 稀疏模型，40 层、256 专家、精确门控 K=8；仅文本 |
@@ -101,12 +104,12 @@ python3.12 -m venv .venv && .venv/bin/pip install -e '.[dev,fetch]'
 
 ### 2) 下载模型
 
-所有支持的 checkpoint 均发布在 Hugging Face。两个 Edge0 发布档位将 LoRA +
+所有支持的 checkpoint 均发布在 Hugging Face 与 ModelScope。两个 Edge0 发布档位将 LoRA +
 prerouter 与基模放在同一目录；Qwen3.8、Gemma 4 与 Muse Glimmer 是稠密 MLX checkpoint，
 Ornith 则是准备为仅文本流式推理的稀疏 VLM checkpoint：
 
-- [`Edge0/Edge0-35B-A3B-preview`](https://huggingface.co/Edge0/Edge0-35B-A3B-preview)（约 23 GB）
-- [`Edge0/Edge0-8B-A1B-preview`](https://huggingface.co/Edge0/Edge0-8B-A1B-preview)（约 4.2 GB）
+- [`Edge0/Edge0-35B-A3B-preview`](https://huggingface.co/Edge0/Edge0-35B-A3B-preview)（约 23 GB） · [ModelScope 镜像](https://www.modelscope.cn/models/Edge0/Edge0-35B-A3B-preview)
+- [`Edge0/Edge0-8B-A1B-preview`](https://huggingface.co/Edge0/Edge0-8B-A1B-preview)（约 4.2 GB） · [ModelScope 镜像](https://www.modelscope.cn/models/Edge0/Edge0-8B-A1B-preview)
 - [`mlx-community/gemma-4-31b-4bit`](https://huggingface.co/mlx-community/gemma-4-31b-4bit)（`google/gemma-4-31b` 的 MLX 4bit 转换；准备后仅文本）
 - [`mlx-community/Muse-Glimmer-30B-4bit`](https://huggingface.co/mlx-community/Muse-Glimmer-30B-4bit)（`meta-models/Muse-Glimmer-30B` 的 MLX 4bit 转换）
 - [`mlx-community/Ornith-1.0-35B-4bit`](https://huggingface.co/mlx-community/Ornith-1.0-35B-4bit)（准备后在 Edge0 中仅支持文本）
