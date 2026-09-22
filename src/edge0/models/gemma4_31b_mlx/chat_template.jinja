@@ -1,0 +1,51 @@
+{#
+  Template: Google Gemma 4 Canonical Chat Template
+  Author: Google Gemma Engineering Team
+  Text-only Edge0 adaptation: multimodal and tool branches are omitted because
+  Edge0 exposes text messages only. Role, turn, thinking-channel, BOS, and
+  generation-prompt behavior follow the canonical 2026-07-09 template from
+  google/gemma-4-31B-it.
+#}
+{%- set enable_thinking = enable_thinking | default(false) -%}
+{%- set loop_messages = messages -%}
+{{- bos_token -}}
+{%- if enable_thinking or (messages and messages[0]['role'] in ['system', 'developer']) -%}
+{{- '<|turn>system\n' -}}
+{%- if enable_thinking -%}
+{{- '<|think|>\n' -}}
+{%- endif -%}
+{%- if messages and messages[0]['role'] in ['system', 'developer'] -%}
+{{- messages[0]['content'] | trim -}}
+{%- set loop_messages = messages[1:] -%}
+{%- endif -%}
+{{- '<turn|>\n' -}}
+{%- endif -%}
+{%- for message in loop_messages -%}
+{%- if message['role'] not in ['user', 'assistant', 'model'] -%}
+{{- raise_exception('Gemma 4 text chat accepts system, developer, user, and assistant roles') -}}
+{%- endif -%}
+{%- set role = 'model' if message['role'] in ['assistant', 'model'] else 'user' -%}
+{{- '<|turn>' + role + '\n' -}}
+{%- set thinking_text = message.get('reasoning') or message.get('reasoning_content') -%}
+{%- if role == 'model' and thinking_text -%}
+{{- '<|channel>thought\n' + thinking_text | trim + '\n<channel|>' -}}
+{%- endif -%}
+{%- if message.get('content') is string -%}
+{{- message['content'] | trim -}}
+{%- elif message.get('content') is sequence -%}
+{%- for item in message['content'] -%}
+{%- if item.get('type') == 'text' -%}
+{{- item.get('text', '') | trim -}}
+{%- else -%}
+{{- raise_exception('Gemma 4 Edge0 integration accepts text content only') -}}
+{%- endif -%}
+{%- endfor -%}
+{%- endif -%}
+{{- '<turn|>\n' -}}
+{%- endfor -%}
+{%- if add_generation_prompt -%}
+{{- '<|turn>model\n' -}}
+{%- if not enable_thinking -%}
+{{- '<|channel>thought\n<channel|>' -}}
+{%- endif -%}
+{%- endif -%}

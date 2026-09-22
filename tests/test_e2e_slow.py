@@ -1,8 +1,11 @@
 """Real-checkpoint smoke tests for the shipped model tiers.
 
-Set ``EDGE0_8B_MODEL`` and/or ``EDGE0_35B_MODEL`` to checkpoint directories
-before running ``pytest -m slow``.  A missing tier is an explicit skip so a
-machine without every large checkpoint can still exercise the available one.
+Set ``EDGE0_8B_MODEL``, ``EDGE0_35B_MODEL``, and/or
+``QWEN38_27B_MLX_MODEL`` / ``MUSE_GLIMMER_30B_MODEL`` /
+``ORNITH_35B_MLX_MODEL`` / ``GEMMA4_31B_MLX_MODEL`` to checkpoint
+directories before running ``pytest -m slow``. A missing model is an explicit
+skip so a machine without every large checkpoint can still exercise the
+available one.
 """
 
 from __future__ import annotations
@@ -84,6 +87,50 @@ def test_edge0_35b_real_checkpoint():
         "edge0-35b",
         [{"role": "user", "content":
           "Hello! Write one short sentence about the seaside."}],
+    )
+    assert output
+    assert len(output) <= MAX_NEW_TOKENS
+
+
+def test_qwen38_27b_mlx_real_checkpoint():
+    output = _generate(
+        "QWEN38_27B_MLX_MODEL",
+        "qwen3.8:27b-mlx",
+        [{"role": "user", "content":
+          "Explain hybrid attention in one concise sentence."}],
+    )
+    assert output
+    assert len(output) <= MAX_NEW_TOKENS
+
+
+def test_muse_glimmer_30b_mlx_real_checkpoint():
+    output = _generate(
+        "MUSE_GLIMMER_30B_MODEL",
+        "muse-glimmer:30b-mlx",
+        [{"role": "user", "content":
+          "Write one concise sentence about starlight."}],
+    )
+    assert output
+    assert len(output) <= MAX_NEW_TOKENS
+
+
+def test_ornith_35b_mlx_real_checkpoint():
+    output = _generate(
+        "ORNITH_35B_MLX_MODEL",
+        "ornith:35b-mlx",
+        [{"role": "user", "content":
+          "Explain reinforcement learning in one concise sentence."}],
+    )
+    assert output
+    assert len(output) <= MAX_NEW_TOKENS
+
+
+def test_gemma4_31b_mlx_real_checkpoint():
+    output = _generate(
+        "GEMMA4_31B_MLX_MODEL",
+        "gemma-4:31b-mlx",
+        [{"role": "user", "content":
+          "Explain partial rotary attention in one concise sentence."}],
     )
     assert output
     assert len(output) <= MAX_NEW_TOKENS

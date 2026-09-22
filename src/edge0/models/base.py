@@ -3,9 +3,9 @@
 The registry contract (``edge0.registry``) is: an adapter module exposes
 ``Config`` (a ``ModelConfig`` subclass with ``from_pretrained``),
 ``build_model`` and ``build_engine``.  ``Config`` carries everything the
-engines need — MoE spec, streaming options, prerouter spec, LoRA, sampling
-defaults, server port and the acceptance profile (tokens/s + peak-active
-memory targets measured on the production machine).
+engines need — architecture spec, optional streaming/prerouter/LoRA
+configuration, sampling defaults, server port and the acceptance profile
+(tokens/s + peak-active memory targets measured on the production machine).
 """
 
 from __future__ import annotations
@@ -15,7 +15,8 @@ from dataclasses import dataclass, field, fields, replace
 from pathlib import Path
 
 from edge0.config import GenerationConfig
-from edge0.moe.spec import MoESpec
+from edge0.context import validate_context_size
+from edge0.moe.spec import MoESpec, QuantSpec
 from edge0.prerouter.spec import PrerouterSpec
 from edge0.streaming.options import LayerOptions
 
@@ -36,18 +37,29 @@ def artifact(name: str, model_dir: str | None = None) -> str:
     return str(ARTIFACTS_DIR / name)
 
 
+@dataclass(frozen=True)
+class DenseSpec:
+    """Shape and quantization metadata for a dense checkpoint."""
+
+    num_hidden_layers: int
+    hidden_size: int
+    intermediate_size: int
+    quant: QuantSpec
+
+
 @dataclass
 class ModelConfig:
     """Everything one edge0 model tier needs to run.
 
-    Subclasses fix the family defaults (specs, presets, generation, port,
-    acceptance targets); ``from_pretrained`` merges user overrides.
+    Subclasses fix the family defaults (dense or MoE specs, presets,
+    generation, port, acceptance targets); ``from_pretrained`` merges
+    user overrides.
     """
 
     name: str
     model_dir: str
-    moe_spec: MoESpec
-    options: LayerOptions
+    moe_spec: MoESpec | None
+    options: LayerOptions | None
     prerouter: PrerouterSpec | None = None
     prerouter_top_k: int = 0          # 0 -> options.top_k
     history_slots: bool = False       # False (default): only the layers whose
@@ -72,6 +84,14 @@ class ModelConfig:
     # acceptance profile (measured on the production Mac)
     target_tok_s: float = 0.0
     peak_active_mem_mb: float = 0.0
+    # Appended to preserve the positional constructor contract of all
+    # pre-dense ModelConfig fields.
+    dense_spec: DenseSpec | None = None
+    context_size: int | None = None
+
+    def __post_init__(self) -> None:
+        if self.context_size is not None:
+            validate_context_size(self.context_size)
 
     @classmethod
     def from_pretrained(cls, model_dir: str | None = None, **overrides):

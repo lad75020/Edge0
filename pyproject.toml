@@ -52,6 +52,9 @@ edge0 = "edge0.cli:main"
 [tool.setuptools.packages.find]
 where = ["src"]
 
+[tool.setuptools.package-data]
+edge0 = ["models/gemma4_31b_mlx/chat_template.jinja"]
+
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 markers = [

@@ -20,10 +20,12 @@ point per step, fills overlapping the next forward — is preserved.
 from __future__ import annotations
 
 import time
+from typing import Any
 
 from edge0.backends import core
 
 from edge0.config import GenerationConfig
+from edge0.context import completion_budget, make_model_cache
 from edge0.sampling import sample
 
 
@@ -68,6 +70,11 @@ class Edge0Engine:
     def _lm_logits(self, h: core.array) -> core.array:
         raise NotImplementedError
 
+    def _make_cache(self, model: Any) -> Any:
+        """Construct the model cache with the configured context cap."""
+        cfg = getattr(self, "cfg", None)
+        return make_model_cache(model, getattr(cfg, "context_size", None))
+
     # ---- shared loops -----------------------------------------------------
 
     def prefill(self, token_ids, chunk_size=None, on_progress=None):
@@ -106,6 +113,11 @@ class Edge0Engine:
             gen_config = getattr(self.cfg, "gen", GenerationConfig())
         if max_new_tokens is None:
             max_new_tokens = gen_config.max_new_tokens
+        max_new_tokens = completion_budget(
+            len(token_ids),
+            max_new_tokens,
+            getattr(self.cfg, "context_size", None),
+        )
         if len(token_ids) > 1:
             self.prefill(token_ids)
         elif len(token_ids) == 1:

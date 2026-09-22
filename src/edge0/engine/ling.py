@@ -156,7 +156,7 @@ class Ling8BEngine(Edge0Engine):
         self._history_prefetch = make_history_prefetch(
             self._all_stream_layers, enabled=cfg.prefetch_history)
 
-        self.cache = self.model.make_cache()
+        self.cache = self._make_cache(self.model)
         # start_server.sh LING_PREWARM=1 parity (opt-in): warm the OS page
         # cache over the whole checkpoint (madvise + sequential read) and
         # run a tiny dummy prefill+step so the first real request runs at
@@ -296,7 +296,7 @@ class Ling8BEngine(Edge0Engine):
                 exp.stage_from_prefill()
 
     def _reset_state(self) -> None:
-        self.cache = self.model.make_cache()
+        self.cache = self._make_cache(self.model)
         if self._pg_state is not None:
             self._pg_stager.reset()
             self._pg_state.reset()

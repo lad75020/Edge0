@@ -19,15 +19,30 @@
 Recover-LoRA + prerouter 路由预判」抽象成可扩展的通用框架。后端隔离设计，
 当前实现 MLX 后端（Apple Silicon），更多平台（CUDA 等）即将接入。
 
-框架随附两个模型档位。每个档位是一个端到端发布：发布的 checkpoint、
-训练好的 LoRA 适配器与训练好的 prerouter 头作为整体协同工作。
+框架随附两个端到端稀疏模型档位，并支持常驻内存的 Qwen3.8、仅文本
+Gemma 4 与 Muse Glimmer，以及精确门控路由的 Ornith MLX checkpoint。
 
 | 档位 | 发布 checkpoint | 推理档 |
 |---|---|---|
 | `edge0-35b` | [`Edge0/Edge0-35B-A3B-preview`](https://huggingface.co/Edge0/Edge0-35B-A3B-preview) | 4bit，40 层，256 专家，prerouter K=4 |
 | `edge0-8b` | [`Edge0/Edge0-8B-A1B-preview`](https://huggingface.co/Edge0/Edge0-8B-A1B-preview) | 4bit，24 层，128 专家，prerouter K=8 |
+| `gemma-4:31b-mlx` | [`mlx-community/gemma-4-31b-4bit`](https://huggingface.co/mlx-community/gemma-4-31b-4bit) | 4bit 稠密模型，60 层常驻文本架构 |
+| `muse-glimmer:30b-mlx` | [`mlx-community/Muse-Glimmer-30B-4bit`](https://huggingface.co/mlx-community/Muse-Glimmer-30B-4bit) | 4bit 稠密模型，52 层文本架构，MLX 常驻推理 |
+| `ornith:35b-mlx` | [`mlx-community/Ornith-1.0-35B-4bit`](https://huggingface.co/mlx-community/Ornith-1.0-35B-4bit) | 4bit 稀疏模型，40 层、256 专家、精确门控 K=8；仅文本 |
+| `qwen3.8:27b-mlx` | [`mlx-community/Qwen3.8-27B-4bit`](https://huggingface.co/mlx-community/Qwen3.8-27B-4bit) | 4bit 稠密模型，64 层，MLX 常驻推理 |
 
-两个 checkpoint 均基于开源稀疏 MoE 基座（分别为 Qwen3.6-35B-A3B
+Muse checkpoint 是 `meta-models/Muse-Glimmer-30B` 的 MLX 4bit 转换。
+Edge0 目前只加载文本架构：会丢弃视觉张量，图片输入尚未接入 Edge0 API。
+
+Gemma checkpoint 是 `google/gemma-4-31b` 的 MLX 4bit 转换。Edge0 的确定性
+准备步骤会移除 355 个 `vision_tower.*` 与 3 个 `embed_vision.*` 张量，安装
+本地规范文本对话模板，并且仅支持文本生成；图片、音频和视频输入均未接入。
+模型权重仍受 Gemma 条款约束，改编的 mlx-vlm 模型代码采用 MIT 许可证。
+
+Ornith 同样以 VLM checkpoint 发布。Edge0 的准备步骤会移除其中 333 个
+视觉张量，仅支持文本生成；图片和视频输入尚未接入，也不依赖 mlx-vlm。
+
+两个 Edge0 发布 checkpoint 均基于开源稀疏 MoE 基座（分别为 Qwen3.6-35B-A3B
 与 Ling 3.0 混合架构），并携带为本框架训练的 LoRA 与 prerouter 权重——
 适配器文件与 checkpoint 同目录、自动加载，`edge0 serve <tier>` 开箱即跑
 训练好的完整管线。
@@ -42,10 +57,12 @@ Recover-LoRA + prerouter 路由预判」抽象成可扩展的通用框架。后�
   `pip install 'mlx==0.30.6' 'mlx-metal==0.30.6'`
   （[#8](https://github.com/Edge0-AI/Edge0/issues/8)）。
 - **内存**：短上下文下 `edge0-35b` ≈2.9 GB、`edge0-8b` ≈1.0 GB
-  峰值激活内存（见[性能实测](#性能实测)）；另为系统、tokenizer 与
-  长上下文 KV 增长预留余量。
+  峰值激活内存；`qwen3.8:27b-mlx` 的峰值进程占用约 14.7 GiB
+  （见[性能实测](#性能实测)）。Gemma 4、Muse Glimmer 与 Ornith 在 Edge0 中尚无内存实测。
+  另为系统、tokenizer 与长上下文 KV 增长预留余量。
 - **磁盘**：4bit checkpoint 约 23 GB（`edge0-35b`）/ 4.2 GB
-  （`edge0-8b`）；专家权重 mmap 按需读取，不一次性载入内存。
+  （`edge0-8b`），Qwen3.8 MLX checkpoint 约 15 GB；Ornith 源张量在移除
+  视觉权重前约 20.4 GB。稀疏专家权重 mmap 按需读取，Qwen3.8 稠密权重常驻内存。
 
 ## 设计
 
@@ -84,22 +101,41 @@ python3.12 -m venv .venv && .venv/bin/pip install -e '.[dev,fetch]'
 
 ### 2) 下载模型
 
-两个档位发布在 Hugging Face——每个仓库把基模 checkpoint 与训练好的
-LoRA + prerouter 适配器打包在**同一目录**，一次下载即为可运行的模型：
+所有支持的 checkpoint 均发布在 Hugging Face。两个 Edge0 发布档位将 LoRA +
+prerouter 与基模放在同一目录；Qwen3.8、Gemma 4 与 Muse Glimmer 是稠密 MLX checkpoint，
+Ornith 则是准备为仅文本流式推理的稀疏 VLM checkpoint：
 
 - [`Edge0/Edge0-35B-A3B-preview`](https://huggingface.co/Edge0/Edge0-35B-A3B-preview)（约 23 GB）
 - [`Edge0/Edge0-8B-A1B-preview`](https://huggingface.co/Edge0/Edge0-8B-A1B-preview)（约 4.2 GB）
+- [`mlx-community/gemma-4-31b-4bit`](https://huggingface.co/mlx-community/gemma-4-31b-4bit)（`google/gemma-4-31b` 的 MLX 4bit 转换；准备后仅文本）
+- [`mlx-community/Muse-Glimmer-30B-4bit`](https://huggingface.co/mlx-community/Muse-Glimmer-30B-4bit)（`meta-models/Muse-Glimmer-30B` 的 MLX 4bit 转换）
+- [`mlx-community/Ornith-1.0-35B-4bit`](https://huggingface.co/mlx-community/Ornith-1.0-35B-4bit)（准备后在 Edge0 中仅支持文本）
+- [`mlx-community/Qwen3.8-27B-4bit`](https://huggingface.co/mlx-community/Qwen3.8-27B-4bit)（约 15 GB）
 
 ```bash
-# 用仓库自带脚本（默认即上述两个仓库）：
+# 用仓库自带脚本（默认即上述六个仓库）：
 .venv/bin/python scripts/fetch_models.py --tier edge0-35b --target-dir models
 .venv/bin/python scripts/fetch_models.py --tier edge0-8b --target-dir models
+.venv/bin/python scripts/fetch_models.py --tier 'gemma-4:31b-mlx' --target-dir models
+.venv/bin/python scripts/fetch_models.py --tier 'muse-glimmer:30b-mlx' --target-dir models
+.venv/bin/python scripts/fetch_models.py --tier 'ornith:35b-mlx' --target-dir models
+.venv/bin/python scripts/fetch_models.py --tier 'qwen3.8:27b-mlx' --target-dir models
 
 # 或直接用 CLI：
 .venv/bin/huggingface-cli download Edge0/Edge0-35B-A3B-preview \
     --local-dir models/edge0-35b
 .venv/bin/huggingface-cli download Edge0/Edge0-8B-A1B-preview \
     --local-dir models/edge0-8b
+.venv/bin/huggingface-cli download mlx-community/gemma-4-31b-4bit \
+    --local-dir models/gemma-4-31b-mlx
+.venv/bin/python scripts/prepare_gemma4_checkpoint.py models/gemma-4-31b-mlx --no-backup
+.venv/bin/huggingface-cli download mlx-community/Muse-Glimmer-30B-4bit \
+    --local-dir models/muse-glimmer-30b-mlx
+.venv/bin/huggingface-cli download mlx-community/Ornith-1.0-35B-4bit \
+    --local-dir models/ornith-35b-mlx
+.venv/bin/python scripts/prepare_ornith_checkpoint.py models/ornith-35b-mlx --no-backup
+.venv/bin/huggingface-cli download mlx-community/Qwen3.8-27B-4bit \
+    --local-dir models/qwen3.8-27b-mlx
 ```
 
 下载完成后目录结构：
@@ -118,6 +154,10 @@ models/edge0-35b/
 ```bash
 export EDGE0_35B_MODEL=$PWD/models/edge0-35b
 export EDGE0_8B_MODEL=$PWD/models/edge0-8b
+export GEMMA4_31B_MLX_MODEL=$PWD/models/gemma-4-31b-mlx
+export MUSE_GLIMMER_30B_MODEL=$PWD/models/muse-glimmer-30b-mlx
+export ORNITH_35B_MLX_MODEL=$PWD/models/ornith-35b-mlx
+export QWEN38_27B_MLX_MODEL=$PWD/models/qwen3.8-27b-mlx
 ```
 
 也可以不用环境变量，直接传目录——框架从 checkpoint 的 `config.json`
@@ -126,6 +166,10 @@ export EDGE0_8B_MODEL=$PWD/models/edge0-8b
 ```bash
 edge0 demo models/edge0-35b
 edge0 serve models/edge0-8b
+edge0 chat models/gemma-4-31b-mlx --prompt "用一句话解释部分旋转注意力。"
+edge0 chat models/muse-glimmer-30b-mlx --prompt "用一句话描写水面微光。"
+edge0 chat models/ornith-35b-mlx --prompt "用一句话解释强化学习。"
+edge0 chat models/qwen3.8-27b-mlx --prompt "用一句话解释混合注意力。"
 ```
 
 ### 4) 运行
@@ -209,14 +253,21 @@ engine.close()   # 释放 mmap / 专家缓存
 |---|---|---|---|---|
 | `edge0-35b` | 14.9–17.7 tok/s | 113 / 140 tok/s | 2.9 GiB | Mac mini M4 Pro, 24 GB |
 | `edge0-8b` | 23.9–25.3 tok/s | 500 / 1428 tok/s | 1.0 GiB | Mac mini M4 Pro, 24 GB |
+| `gemma-4:31b-mlx` | 尚未实测 | 尚未实测 | 尚未实测 | — |
+| `muse-glimmer:30b-mlx` | 尚未实测 | 尚未实测 | 尚未实测 | — |
+| `ornith:35b-mlx` | 尚未实测 | 尚未实测 | 尚未实测 | — |
+| `qwen3.8:27b-mlx` | 6.0 tok/s† | — | 14.7 GiB 进程占用 | Mac Studio M4 Max, 36 GB |
 
 *冷 = 进程启动后首请求（专家权重从 SSD 逐页换入）；热 = 后续请求（页缓存常驻）。Prefill 为 ≈3.3k token 长 prompt 的吞吐（`BENCH_LONG=1`）。
+
+†Qwen3.8 数据来自含短 prompt prefill 的 48-token 冒烟测试，与稀疏档位的长 prompt benchmark 不完全可比。
 
 复现：
 
 ```bash
 python examples/bench.py edge0-35b    # 经 $EDGE0_35B_MODEL
 python examples/bench.py edge0-8b    # 经 $EDGE0_8B_MODEL
+edge0 chat qwen3.8:27b-mlx --prompt "简要解释混合注意力。"
 ```
 
 ## 验证
@@ -225,6 +276,14 @@ python examples/bench.py edge0-8b    # 经 $EDGE0_8B_MODEL
 pytest                 # 单元测试（不含真实权重）
 EDGE0_8B_MODEL=/path/to/edge0-8b pytest -m slow -q
                         # 真实权重生成测试；缺少的档位会明确 skip
+QWEN38_27B_MLX_MODEL=/path/to/qwen3.8-27b-mlx \
+  pytest -m slow -q tests/test_e2e_slow.py::test_qwen38_27b_mlx_real_checkpoint
+MUSE_GLIMMER_30B_MODEL=/path/to/muse-glimmer-30b-mlx \
+  pytest -m slow -q tests/test_e2e_slow.py::test_muse_glimmer_30b_mlx_real_checkpoint
+ORNITH_35B_MLX_MODEL=/path/to/ornith-35b-mlx \
+  pytest -m slow -q tests/test_e2e_slow.py::test_ornith_35b_mlx_real_checkpoint
+GEMMA4_31B_MLX_MODEL=/path/to/gemma-4-31b-mlx \
+  pytest -m slow -q tests/test_e2e_slow.py::test_gemma4_31b_mlx_real_checkpoint
 .venv/bin/python scripts/e2e_smoke.py \
   --qwen-dir /path/to/edge0-35b --ling-dir /path/to/edge0-8b
                         # staged vs exact 一致性 + 生成冒烟
@@ -237,8 +296,9 @@ examples/demo.py       # 最小 API walkthrough（edge0 demo 的等价代码）
 - [架构总览](docs/architecture.md)
 - [注意力抽象](docs/attention.md) / [MoE 抽象](docs/moe.md) / [SSD 流式](docs/streaming.md) / [prerouter](docs/prerouter.md)
 - [如何接入新模型](docs/adding-a-model.md)
-- [edge0-35b](docs/models/edge0-35b.md) / [edge0-8b](docs/models/edge0-8b.md)
+- [edge0-35b](docs/models/edge0-35b.md) / [edge0-8b](docs/models/edge0-8b.md) / [Gemma 4 31B MLX](docs/models/gemma-4-31b-mlx.md) / [Muse-Glimmer-30B MLX](docs/models/muse-glimmer-30b-mlx.md) / [Ornith-1.0-35B MLX](docs/models/ornith-35b-mlx.md) / [Qwen3.8-27B MLX](docs/models/qwen3.8-27b-mlx.md)
 
 ## License
 
-Apache-2.0，含 vendored 第三方代码（详见 [NOTICE](NOTICE)）。
+Edge0 采用 Apache-2.0；改编的第三方代码保留各自许可证（详见
+[NOTICE](NOTICE)）。下载的 Gemma 模型权重不属于 Edge0，仍受 Gemma 条款约束。

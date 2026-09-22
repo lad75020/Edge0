@@ -2,15 +2,22 @@
 
 from __future__ import annotations
 
+import json
+
 import pytest
 
 import edge0.models  # noqa: F401  (populates MODEL_REGISTRY on import)
 from edge0 import AutoConfig
+from edge0.models.base import ModelConfig
 from edge0.registry import MODEL_REGISTRY, TYPE_ALIASES
 
 
-def test_both_tiers_registered():
-    assert set(MODEL_REGISTRY) == {"edge0-35b", "edge0-8b"}
+def test_all_models_registered():
+    assert set(MODEL_REGISTRY) == {
+        "edge0-35b", "edge0-8b", "gemma-4:31b-mlx",
+        "muse-glimmer:30b-mlx",
+        "ornith:35b-mlx", "qwen3.8:27b-mlx",
+    }
 
 
 def test_type_aliases_resolve():
@@ -18,6 +25,35 @@ def test_type_aliases_resolve():
     assert TYPE_ALIASES["qwen3_5_moe_text"] == "edge0-35b"
     assert TYPE_ALIASES["bailing_hybrid"] == "edge0-8b"
     assert TYPE_ALIASES["bailing_moe_linear"] == "edge0-8b"
+    assert TYPE_ALIASES["qwen3_5"] == "qwen3.8:27b-mlx"
+    assert TYPE_ALIASES["qwen3_5_text"] == "qwen3.8:27b-mlx"
+    assert TYPE_ALIASES["muse_glimmer"] == "muse-glimmer:30b-mlx"
+    assert TYPE_ALIASES["muse_glimmer_text"] == "muse-glimmer:30b-mlx"
+    assert TYPE_ALIASES["gemma4"] == "gemma-4:31b-mlx"
+    assert TYPE_ALIASES["gemma4_text"] == "gemma-4:31b-mlx"
+
+
+def test_edge0_model_name_marker_precedes_generic_model_type(tmp_path):
+    (tmp_path / "config.json").write_text(json.dumps({
+        "edge0_model_name": "ornith:35b-mlx",
+        "model_type": "qwen3_5_moe",
+        "text_config": {"model_type": "qwen3_5_moe_text"},
+    }), encoding="utf-8")
+
+    cfg = AutoConfig.from_pretrained(model_dir=str(tmp_path))
+
+    assert cfg.name == "ornith:35b-mlx"
+
+
+def test_generic_qwen35_model_type_fallback_stays_edge0_35b(tmp_path):
+    (tmp_path / "config.json").write_text(json.dumps({
+        "model_type": "qwen3_5_moe",
+        "text_config": {"model_type": "qwen3_5_moe_text"},
+    }), encoding="utf-8")
+
+    cfg = AutoConfig.from_pretrained(model_dir=str(tmp_path))
+
+    assert cfg.name == "edge0-35b"
 
 
 @pytest.mark.parametrize("name", ["edge0-35b", "edge0-8b"])
@@ -83,6 +119,123 @@ def test_ling8b_profile():
     assert cfg.gen.repetition_penalty == 1.1
     assert 156895 in cfg.gen.eos_ids
     assert cfg.port == 8083
+
+
+def test_qwen38_27b_mlx_dense_profile():
+    cfg = AutoConfig.from_pretrained(name="qwen3.8:27b-mlx")
+
+    assert cfg.name == "qwen3.8:27b-mlx"
+    assert cfg.moe_spec is None
+    assert cfg.dense_spec.num_hidden_layers == 64
+    assert cfg.dense_spec.hidden_size == 5120
+    assert cfg.dense_spec.intermediate_size == 17408
+    assert cfg.dense_spec.quant.bits == 4
+    assert cfg.dense_spec.quant.group_size == 64
+    assert cfg.dense_spec.quant.mode == "affine"
+
+    assert cfg.options is None
+    assert cfg.prerouter is None
+    assert cfg.prerouter_top_k == 0
+    assert cfg.history_slots is False
+    assert cfg.lora == ""
+    assert cfg.intra_staging is False
+    assert cfg.prefetch_history is False
+    assert cfg.hot_window == 0
+
+    assert cfg.gen.temperature == 1.0
+    assert cfg.gen.top_p == 0.95
+    assert cfg.gen.top_k == 20
+    assert cfg.gen.repetition_penalty == 1.0
+    assert cfg.gen.eos_ids == (248046, 248044)
+    assert cfg.gen.max_new_tokens == 2048
+    assert cfg.port == 8084
+    assert cfg.target_tok_s == 6.0
+    assert cfg.peak_active_mem_mb == 15100.0
+
+
+def test_muse_glimmer_30b_mlx_dense_profile():
+    cfg = AutoConfig.from_pretrained(name="muse-glimmer:30b-mlx")
+
+    assert cfg.name == "muse-glimmer:30b-mlx"
+    assert cfg.moe_spec is None
+    assert cfg.dense_spec.num_hidden_layers == 52
+    assert cfg.dense_spec.hidden_size == 6656
+    assert cfg.dense_spec.intermediate_size == 19968
+    assert cfg.dense_spec.quant.bits == 4
+    assert cfg.dense_spec.quant.group_size == 64
+    assert cfg.dense_spec.quant.mode == "affine"
+
+    assert cfg.options is None
+    assert cfg.prerouter is None
+    assert cfg.prerouter_top_k == 0
+    assert cfg.history_slots is False
+    assert cfg.lora == ""
+    assert cfg.intra_staging is False
+    assert cfg.prefetch_history is False
+    assert cfg.hot_window == 0
+
+    assert cfg.gen.temperature == 0.0
+    assert cfg.gen.top_p == 1.0
+    assert cfg.gen.top_k == 0
+    assert cfg.gen.repetition_penalty == 1.0
+    assert cfg.gen.eos_ids == (200001, 200008)
+    assert cfg.gen.max_new_tokens == 2048
+    assert cfg.port == 8086
+    assert cfg.target_tok_s == 0.0
+    assert cfg.peak_active_mem_mb == 0.0
+
+
+def test_gemma4_31b_mlx_dense_profile():
+    cfg = AutoConfig.from_pretrained(name="gemma-4:31b-mlx")
+
+    assert cfg.name == "gemma-4:31b-mlx"
+    assert cfg.moe_spec is None
+    assert cfg.dense_spec.num_hidden_layers == 60
+    assert cfg.dense_spec.hidden_size == 5376
+    assert cfg.dense_spec.intermediate_size == 21504
+    assert cfg.dense_spec.quant.bits == 4
+    assert cfg.dense_spec.quant.group_size == 64
+    assert cfg.dense_spec.quant.mode == "affine"
+
+    assert cfg.options is None
+    assert cfg.prerouter is None
+    assert cfg.prerouter_top_k == 0
+    assert cfg.history_slots is False
+    assert cfg.lora == ""
+    assert cfg.intra_staging is False
+    assert cfg.prefetch_history is False
+    assert cfg.hot_window == 0
+
+    assert cfg.gen.temperature == 1.0
+    assert cfg.gen.top_p == 0.95
+    assert cfg.gen.top_k == 64
+    assert cfg.gen.repetition_penalty == 1.0
+    assert cfg.gen.eos_ids == (1,)
+    assert cfg.gen.max_new_tokens == 2048
+    assert cfg.port == 8088
+    assert cfg.target_tok_s == 0.0
+    assert cfg.peak_active_mem_mb == 0.0
+
+
+def test_model_config_preserves_legacy_prerouter_positional_argument():
+    prerouter = object()
+    cfg = ModelConfig("legacy", "/model", None, None, prerouter)
+
+    assert cfg.prerouter is prerouter
+    assert cfg.dense_spec is None
+
+
+@pytest.mark.parametrize("value", [1, 524288])
+def test_context_size_override_accepts_boundaries(value):
+    cfg = AutoConfig.from_pretrained(name="edge0-8b", context_size=value)
+
+    assert cfg.context_size == value
+
+
+@pytest.mark.parametrize("value", [0, -1, 524289])
+def test_context_size_override_rejects_out_of_range_values(value):
+    with pytest.raises(ValueError, match="context size"):
+        AutoConfig.from_pretrained(name="edge0-8b", context_size=value)
 
 
 def test_override_and_reject():

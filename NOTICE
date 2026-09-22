@@ -17,5 +17,25 @@ bailing_hybrid (Apache License 2.0)
     prerouter hook identifiers renamed for consistency with the framework.
   Copyright (c) the bailing / Ling MLX contributors.
 
+mlx-vlm Muse Glimmer model (MIT License)
+  - `src/edge0/backends/mlx/_impl/muse_glimmer.py` adapts the language-only
+    Muse Glimmer architecture from mlx-vlm 0.6.12
+    (https://github.com/Blaizzy/mlx-vlm). The vision tower, adapter,
+    projection, and multimodal input path are intentionally omitted.
+  Copyright © 2025 Prince Canuma.
+
+mlx-vlm Gemma 4 model code (MIT License)
+  - `src/edge0/backends/mlx/_impl/gemma4.py` adapts the language-only
+    Gemma 4 architecture from mlx-vlm 0.4.3
+    (https://github.com/Blaizzy/mlx-vlm). Vision, audio, video, perception,
+    multimodal embedding, and multimodal input paths are intentionally omitted.
+  Copyright © 2025 Prince Canuma.
+
+Google Gemma 4 canonical chat template
+  - `src/edge0/models/gemma4_31b_mlx/chat_template.jinja` is an attributed
+    text-only adaptation of the canonical template shipped by
+    `google/gemma-4-31B-it`. Gemma model weights are not included in Edge0
+    and remain subject to the Gemma terms.
+
 All other files are Copyright (c) 2025 edge0 contributors, licensed under
 the Apache License, Version 2.0 (see LICENSE).

@@ -13,6 +13,9 @@ dist/
 # Trained adapter artifacts (never committed; see README)
 artifacts/
 
+# Downloaded model checkpoints (large, local-only)
+/models/
+
 # macOS
 .DS_Store
 

@@ -22,16 +22,36 @@ framework. The backend is isolated by design: the current MLX backend
 runs on Apple Silicon, and additional platforms (CUDA, …) plug into the
 same core abstractions.
 
-Two model tiers ship with the framework. Each tier is an end-to-end
-release: the released checkpoint, the trained LoRA adapters, and the
-trained prerouter heads work together as one unit.
+Two sparse model tiers ship with the framework as end-to-end releases.
+Resident dense Qwen3.8, text-only Gemma 4 and Muse Glimmer, and exact-routing
+streaming Ornith adapters are also available for compatible MLX checkpoints.
 
 | Tier | Released checkpoint | Inference profile |
 |---|---|---|
 | `edge0-35b` | [`Edge0/Edge0-35B-A3B-preview`](https://huggingface.co/Edge0/Edge0-35B-A3B-preview) | 4-bit, 40 layers, 256 experts, prerouter K=4 |
 | `edge0-8b` | [`Edge0/Edge0-8B-A1B-preview`](https://huggingface.co/Edge0/Edge0-8B-A1B-preview) | 4-bit, 24 layers, 128 experts, prerouter K=8 |
+| `gemma-4:31b-mlx` | [`mlx-community/gemma-4-31b-4bit`](https://huggingface.co/mlx-community/gemma-4-31b-4bit) | 4-bit dense, 60-layer resident text model |
+| `muse-glimmer:30b-mlx` | [`mlx-community/Muse-Glimmer-30B-4bit`](https://huggingface.co/mlx-community/Muse-Glimmer-30B-4bit) | 4-bit dense, 52-layer text model, resident MLX inference |
+| `ornith:35b-mlx` | [`mlx-community/Ornith-1.0-35B-4bit`](https://huggingface.co/mlx-community/Ornith-1.0-35B-4bit) | 4-bit sparse, 40 layers, 256 experts, exact gate-routed K=8; text only |
+| `qwen3.8:27b-mlx` | [`mlx-community/Qwen3.8-27B-4bit`](https://huggingface.co/mlx-community/Qwen3.8-27B-4bit) | 4-bit dense, 64 layers, resident MLX inference |
 
-Both checkpoints are built on open sparse-MoE base models (Qwen3.6-35B-A3B
+The Muse checkpoint is an MLX 4-bit conversion of
+`meta-models/Muse-Glimmer-30B`. Edge0 currently loads its text architecture
+only: vision tensors are discarded and image input is not yet wired through
+Edge0 APIs.
+
+The Gemma checkpoint is an MLX 4-bit conversion of `google/gemma-4-31b`.
+Edge0's deterministic preparation strips its 355 `vision_tower.*` and three
+`embed_vision.*` tensors, installs a local canonical text chat template, and
+supports text generation only. Image, audio, and video inputs are not wired.
+Model weights remain subject to the Gemma terms; the adapted mlx-vlm model
+code is MIT-licensed.
+
+Ornith is also published as a VLM checkpoint. Edge0's preparation step strips
+its 333 vision tensors and supports text generation only; image and video
+inputs are not wired, and mlx-vlm is not a runtime dependency.
+
+The two Edge0 release checkpoints are built on open sparse-MoE base models (Qwen3.6-35B-A3B
 and the Ling 3.0 bailing hybrid respectively) and ship with the
 LoRA and prerouter training done for this framework — the adapter files
 are co-located with each checkpoint and load automatically, so
@@ -48,11 +68,14 @@ are co-located with each checkpoint and load automatically, so
   means an older `mlx`: `pip install 'mlx==0.30.6' 'mlx-metal==0.30.6'`
   ([#8](https://github.com/Edge0-AI/Edge0/issues/8)).
 - **Memory**: ~2.9 GB peak active memory for `edge0-35b`, ~1.0 GB for
-  `edge0-8b` (short contexts; see [Benchmark](#benchmark)). Add
-  headroom for the OS, tokenizer, and long-context KV growth.
+  `edge0-8b`, and ~14.7 GiB peak process footprint for the resident
+  `qwen3.8:27b-mlx` adapter (short contexts; see [Benchmark](#benchmark)). Add
+  headroom for the OS, tokenizer, and long-context KV growth. Gemma 4, Muse
+  Glimmer, and Ornith memory have not yet been measured in Edge0.
 - **Disk**: the 4-bit checkpoints are ~23 GB (`edge0-35b`) and ~4.2 GB
-  (`edge0-8b`); expert weights are mmapped and read on demand, they are
-  not loaded into RAM up front.
+  (`edge0-8b`); the Qwen3.8 MLX checkpoint is ~15 GB, while Ornith's source
+  tensors total ~20.4 GB before the vision strip. Sparse expert weights are
+  mmapped and read on demand; the dense Qwen3.8 weights are resident.
 
 ## Design
 
@@ -96,21 +119,36 @@ python3.12 -m venv .venv && .venv/bin/pip install -e '.[dev,fetch]'
 
 ### 2) Download a model
 
-The two tiers are published on Hugging Face — each repo bundles the
-base checkpoint and the trained LoRA + prerouter adapters in **one
-directory**, so a single download is a ready-to-run model:
+All supported checkpoints are published on Hugging Face. The two Edge0 release
+repos bundle their trained LoRA and prerouter adapters in the same directory;
+Qwen3.8, Gemma 4, and Muse Glimmer are dense MLX checkpoints, while Ornith is
+a sparse VLM checkpoint prepared for text-only streaming:
 
 - [`Edge0/Edge0-35B-A3B-preview`](https://huggingface.co/Edge0/Edge0-35B-A3B-preview) (~23 GB)
 - [`Edge0/Edge0-8B-A1B-preview`](https://huggingface.co/Edge0/Edge0-8B-A1B-preview) (~4.2 GB)
+- [`mlx-community/gemma-4-31b-4bit`](https://huggingface.co/mlx-community/gemma-4-31b-4bit) (MLX 4-bit conversion of `google/gemma-4-31b`; text-only after preparation)
+- [`mlx-community/Muse-Glimmer-30B-4bit`](https://huggingface.co/mlx-community/Muse-Glimmer-30B-4bit) (MLX 4-bit conversion of `meta-models/Muse-Glimmer-30B`)
+- [`mlx-community/Ornith-1.0-35B-4bit`](https://huggingface.co/mlx-community/Ornith-1.0-35B-4bit) (text-only in Edge0 after preparation)
+- [`mlx-community/Qwen3.8-27B-4bit`](https://huggingface.co/mlx-community/Qwen3.8-27B-4bit) (~15 GB)
 
 ```bash
-# with the repo's helper (defaults to the two repos above):
+# with the repo's helper (defaults to the six repos above):
 .venv/bin/python scripts/fetch_models.py --tier edge0-35b --target-dir models
 .venv/bin/python scripts/fetch_models.py --tier edge0-8b --target-dir models
+.venv/bin/python scripts/fetch_models.py --tier 'gemma-4:31b-mlx' --target-dir models
+.venv/bin/python scripts/fetch_models.py --tier 'muse-glimmer:30b-mlx' --target-dir models
+.venv/bin/python scripts/fetch_models.py --tier 'ornith:35b-mlx' --target-dir models
+.venv/bin/python scripts/fetch_models.py --tier 'qwen3.8:27b-mlx' --target-dir models
 
 # or directly with the CLI:
 .venv/bin/huggingface-cli download Edge0/Edge0-35B-A3B-preview     --local-dir models/edge0-35b
 .venv/bin/huggingface-cli download Edge0/Edge0-8B-A1B-preview     --local-dir models/edge0-8b
+.venv/bin/huggingface-cli download mlx-community/gemma-4-31b-4bit --local-dir models/gemma-4-31b-mlx
+.venv/bin/python scripts/prepare_gemma4_checkpoint.py models/gemma-4-31b-mlx --no-backup
+.venv/bin/huggingface-cli download mlx-community/Muse-Glimmer-30B-4bit --local-dir models/muse-glimmer-30b-mlx
+.venv/bin/huggingface-cli download mlx-community/Ornith-1.0-35B-4bit --local-dir models/ornith-35b-mlx
+.venv/bin/python scripts/prepare_ornith_checkpoint.py models/ornith-35b-mlx --no-backup
+.venv/bin/huggingface-cli download mlx-community/Qwen3.8-27B-4bit --local-dir models/qwen3.8-27b-mlx
 ```
 
 Either way you end up with a directory like:
@@ -130,6 +168,10 @@ Tier names resolve to local directories via environment variables
 ```bash
 export EDGE0_35B_MODEL=$PWD/models/edge0-35b
 export EDGE0_8B_MODEL=$PWD/models/edge0-8b
+export GEMMA4_31B_MLX_MODEL=$PWD/models/gemma-4-31b-mlx
+export MUSE_GLIMMER_30B_MODEL=$PWD/models/muse-glimmer-30b-mlx
+export ORNITH_35B_MLX_MODEL=$PWD/models/ornith-35b-mlx
+export QWEN38_27B_MLX_MODEL=$PWD/models/qwen3.8-27b-mlx
 ```
 
 Or skip the env vars entirely and pass the directory directly — the
@@ -138,6 +180,10 @@ tier is auto-detected from the checkpoint's `config.json`:
 ```bash
 edge0 demo models/edge0-35b
 edge0 serve models/edge0-8b
+edge0 chat models/gemma-4-31b-mlx --prompt "Explain partial rotary attention briefly."
+edge0 chat models/muse-glimmer-30b-mlx --prompt "Reply with one sentence."
+edge0 chat models/ornith-35b-mlx --prompt "Explain reinforcement learning briefly."
+edge0 chat models/qwen3.8-27b-mlx --prompt "Reply with only the word OK."
 ```
 
 ### 4) Run
@@ -158,6 +204,9 @@ curl http://127.0.0.1:8000/v1/chat/completions \
 # 5) One-shot chat (pass --max-new to cap length; add --show-thinking to
 #    print the model's reasoning block too)
 edge0 chat edge0-35b --prompt "Explain streaming inference in one sentence."
+
+# demo, chat, and serve can cap prompt + completion (up to 512K tokens)
+edge0 chat edge0-35b --context-size 512k --prompt "Hello!"
 ```
 
 `python -m edge0 ...` is equivalent to `edge0 ...`.
@@ -227,16 +276,24 @@ warmup steps → 200 timed sampled decode tokens, 2 runs per tier):
 |---|---|---|---|---|
 | `edge0-35b` | 14.9–17.7 tok/s | 113 / 140 tok/s | 2.9 GiB | Mac mini M4 Pro, 24 GB |
 | `edge0-8b` | 23.9–25.3 tok/s | 500 / 1428 tok/s | 1.0 GiB | Mac mini M4 Pro, 24 GB |
+| `gemma-4:31b-mlx` | not measured | not measured | not measured | — |
+| `muse-glimmer:30b-mlx` | not measured | not measured | not measured | — |
+| `ornith:35b-mlx` | not measured | not measured | not measured | — |
+| `qwen3.8:27b-mlx` | 6.0 tok/s† | — | 14.7 GiB process footprint | Mac Studio M4 Max, 36 GB |
 
 *Cold = first request after process start (expert weights fault in from
 SSD); warm = subsequent requests (page cache resident). Prefill numbers
 are throughput over a ~3.3k-token prompt (`BENCH_LONG=1`).*
+
+†Qwen3.8 is a 48-token generation smoke measurement including its short
+prompt prefill, not the long-prompt sparse-tier benchmark protocol.
 
 Reproduce:
 
 ```bash
 python examples/bench.py edge0-35b    # via $EDGE0_35B_MODEL
 python examples/bench.py edge0-8b    # via $EDGE0_8B_MODEL
+edge0 chat qwen3.8:27b-mlx --prompt "Explain hybrid attention briefly."
 ```
 
 ## Tests
@@ -245,6 +302,14 @@ python examples/bench.py edge0-8b    # via $EDGE0_8B_MODEL
 pytest                 # unit tests (no real weights)
 EDGE0_8B_MODEL=/path/to/edge0-8b pytest -m slow -q
                         # real-weight generation; missing tiers are skipped
+QWEN38_27B_MLX_MODEL=/path/to/qwen3.8-27b-mlx \
+  pytest -m slow -q tests/test_e2e_slow.py::test_qwen38_27b_mlx_real_checkpoint
+MUSE_GLIMMER_30B_MODEL=/path/to/muse-glimmer-30b-mlx \
+  pytest -m slow -q tests/test_e2e_slow.py::test_muse_glimmer_30b_mlx_real_checkpoint
+ORNITH_35B_MLX_MODEL=/path/to/ornith-35b-mlx \
+  pytest -m slow -q tests/test_e2e_slow.py::test_ornith_35b_mlx_real_checkpoint
+GEMMA4_31B_MLX_MODEL=/path/to/gemma-4-31b-mlx \
+  pytest -m slow -q tests/test_e2e_slow.py::test_gemma4_31b_mlx_real_checkpoint
 .venv/bin/python scripts/e2e_smoke.py \
   --qwen-dir /path/to/edge0-35b --ling-dir /path/to/edge0-8b
                         # staged vs exact consistency + generation smoke
@@ -257,8 +322,10 @@ examples/demo.py       # minimal API walkthrough
 - [Architecture](docs/architecture.md)
 - [Attention](docs/attention.md) / [MoE](docs/moe.md) / [SSD streaming](docs/streaming.md) / [prerouter](docs/prerouter.md)
 - [Adding a model](docs/adding-a-model.md)
-- [edge0-35b](docs/models/edge0-35b.md) / [edge0-8b](docs/models/edge0-8b.md)
+- [edge0-35b](docs/models/edge0-35b.md) / [edge0-8b](docs/models/edge0-8b.md) / [Gemma 4 31B MLX](docs/models/gemma-4-31b-mlx.md) / [Muse-Glimmer-30B MLX](docs/models/muse-glimmer-30b-mlx.md) / [Ornith-1.0-35B MLX](docs/models/ornith-35b-mlx.md) / [Qwen3.8-27B MLX](docs/models/qwen3.8-27b-mlx.md)
 
 ## License
 
-Apache-2.0, including vendored third-party code (see [NOTICE](NOTICE)).
+Edge0 is Apache-2.0. Adapted third-party code retains its stated license; see
+[NOTICE](NOTICE). Downloaded Gemma model weights are not part of Edge0 and
+remain subject to the Gemma terms.

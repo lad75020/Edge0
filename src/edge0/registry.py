@@ -13,6 +13,15 @@ from dataclasses import dataclass
 
 MODEL_REGISTRY: dict[str, type] = {}
 TYPE_ALIASES: dict[str, str] = {
+    # dense Gemma 4 text family
+    "gemma4": "gemma-4:31b-mlx",
+    "gemma4_text": "gemma-4:31b-mlx",
+    # dense Muse Glimmer text family
+    "muse_glimmer": "muse-glimmer:30b-mlx",
+    "muse_glimmer_text": "muse-glimmer:30b-mlx",
+    # dense qwen3_5 family
+    "qwen3_5": "qwen3.8:27b-mlx",
+    "qwen3_5_text": "qwen3.8:27b-mlx",
     # qwen3_5_moe family
     "qwen3_5_moe_text": "edge0-35b",
     "qwen3_5_moe": "edge0-35b",
@@ -57,9 +66,13 @@ def _resolve_name(model_dir: str | None, name: str | None) -> str:
         f"model_dir={model_dir!r}); registered: {known}")
 
 def _model_type_from_dir(model_dir: str) -> str:
-    """config.json model_type (or architectures[0] for checkpoints that
-    omit model_type, e.g. the ling family), falling back to the
-    directory basename."""
+    """Edge0 marker, config model type, or checkpoint directory basename.
+
+    ``edge0_model_name`` is checked first so two Edge0 tiers can preserve
+    the same upstream ``model_type`` without making that generic alias
+    ambiguous. Checkpoints without the optional marker retain the legacy
+    model-type and basename fallbacks.
+    """
     import json
     import os
     cfg_path = os.path.join(model_dir, "config.json")
@@ -67,6 +80,9 @@ def _model_type_from_dir(model_dir: str) -> str:
         try:
             with open(cfg_path) as f:
                 cfg = json.load(f)
+            marker = str(cfg.get("edge0_model_name", "") or "")
+            if marker:
+                return marker
             mt = str(cfg.get("model_type", "") or "")
             if not mt:
                 archs = cfg.get("architectures") or []

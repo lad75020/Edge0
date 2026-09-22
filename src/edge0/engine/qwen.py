@@ -148,7 +148,7 @@ class Qwen35Engine(Edge0Engine):
         self._history_prefetch = make_history_prefetch(
             self._all_stream_layers, enabled=cfg.prefetch_history)
 
-        self.cache = self._lm.make_cache()
+        self.cache = self._make_cache(self._lm)
 
     # ---- forward ----------------------------------------------------------
 
@@ -247,7 +247,7 @@ class Qwen35Engine(Edge0Engine):
                     exp.prefetch_from_prefill()
 
     def _reset_state(self) -> None:
-        self.cache = self._lm.make_cache()
+        self.cache = self._make_cache(self._lm)
         if self._pg_state is not None:
             self._pg_state.reset()
             # Drop the per-block feature captures too.  The MoE patch writes

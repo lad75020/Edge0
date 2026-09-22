@@ -8,4 +8,10 @@
   production deployment, with the prerouter machinery renamed from the
   legacy identifiers (``*_gate*`` -> ``prerouter*``) and no other
   changes.
+* ``muse_glimmer.py`` — the MIT-licensed mlx-vlm 0.6.12 Muse Glimmer
+  language architecture, adapted to pinned mlx-lm APIs with all vision
+  modules and inputs deliberately omitted.
+* ``gemma4.py`` — the MIT-licensed mlx-vlm 0.4.3 Gemma 4 language
+  architecture, adapted to pinned mlx-lm APIs with all non-text modules
+  and inputs deliberately omitted.
 """

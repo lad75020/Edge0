@@ -16,7 +16,7 @@ import os
 import re
 import sys
 
-from edge0 import models  # noqa: F401  (populates MODEL_REGISTRY)
+from edge0.context import MAX_CONTEXT_SIZE, parse_context_size
 from edge0.registry import MODEL_REGISTRY
 
 # Tier name -> environment variable that locates that tier's checkpoint
@@ -24,27 +24,58 @@ from edge0.registry import MODEL_REGISTRY
 TIER_ENV = {
     "edge0-35b": "EDGE0_35B_MODEL",
     "edge0-8b": "EDGE0_8B_MODEL",
+    "gemma-4:31b-mlx": "GEMMA4_31B_MLX_MODEL",
+    "muse-glimmer:30b-mlx": "MUSE_GLIMMER_30B_MODEL",
+    "ornith:35b-mlx": "ORNITH_35B_MLX_MODEL",
+    "qwen3.8:27b-mlx": "QWEN38_27B_MLX_MODEL",
 }
 
 DEMO_PROMPTS = {
     "edge0-35b": "Hello! Write one short sentence about the seaside.",
     "edge0-8b": "你好，用一句话介绍海滨城市。",
+    "gemma-4:31b-mlx": (
+        "Explain partial rotary attention in one short sentence."),
+    "muse-glimmer:30b-mlx": (
+        "Write one short sentence about light shimmering on water."),
+    "ornith:35b-mlx": (
+        "Explain reinforcement learning in one short sentence."),
+    "qwen3.8:27b-mlx": "Explain hybrid attention in one short sentence.",
 }
 
 
+def _context_size_arg(value: str) -> int:
+    """Convert a bounded, optionally suffixed token count for argparse."""
+    try:
+        return parse_context_size(value)
+    except ValueError as exc:
+        raise argparse.ArgumentTypeError(str(exc)) from exc
+
+
 def cmd_models(args) -> int:
+    from edge0 import models  # noqa: F401  (populates MODEL_REGISTRY)
+
     for name in sorted(MODEL_REGISTRY):
         mod = MODEL_REGISTRY[name]
         cfg = mod.Config.from_pretrained(None)  # tier defaults
         print(f"{name}  (port {cfg.port}, target {cfg.target_tok_s} tok/s, "
               f"peak ≈ {cfg.peak_active_mem_mb:.0f} MB)")
-        print(f"  experts={cfg.moe_spec.num_experts} "
-              f"top_k={cfg.moe_spec.top_k} "
-              f"quant={cfg.moe_spec.quant.bits}bit/"
-              f"g{cfg.moe_spec.quant.group_size} "
-              f"staged_n={cfg.options.staged_n} "
-              f"prefill_full={cfg.options.prefill_full_layers} "
-              f"hot={cfg.options.hot_per_layer}")
+        if cfg.moe_spec is not None:
+            print(f"  experts={cfg.moe_spec.num_experts} "
+                  f"top_k={cfg.moe_spec.top_k} "
+                  f"quant={cfg.moe_spec.quant.bits}bit/"
+                  f"g{cfg.moe_spec.quant.group_size} "
+                  f"staged_n={cfg.options.staged_n} "
+                  f"prefill_full={cfg.options.prefill_full_layers} "
+                  f"hot={cfg.options.hot_per_layer}")
+        else:
+            dense = cfg.dense_spec
+            if dense is None:
+                raise ValueError(f"dense model {name!r} has no dense_spec")
+            print(f"  dense layers={dense.num_hidden_layers} "
+                  f"hidden={dense.hidden_size} "
+                  f"intermediate={dense.intermediate_size} "
+                  f"quant={dense.quant.bits}bit/"
+                  f"g{dense.quant.group_size} {dense.quant.mode}")
         pr = cfg.prerouter
         if pr is not None:
             owners = pr.owners
@@ -68,7 +99,23 @@ def _engine_kwargs(args) -> dict:
         kw["lora"] = ""
     if getattr(args, "history_slots", False):
         kw["history_slots"] = True
+    if getattr(args, "context_size", None) is not None:
+        kw["context_size"] = args.context_size
     return kw
+
+
+def _add_context_size_argument(parser: argparse.ArgumentParser) -> None:
+    """Add the shared context-window option to a generation subcommand."""
+    parser.add_argument(
+        "--context-size",
+        "--ctx-size",
+        type=_context_size_arg,
+        default=None,
+        metavar="SIZE",
+        help=("maximum prompt + completion context in tokens "
+              f"(1-{MAX_CONTEXT_SIZE}; suffixes: k, ki, ko; "
+              "default: model cache)"),
+    )
 
 
 def _resolve_model(args) -> tuple[str | None, str | None]:
@@ -82,6 +129,8 @@ def _resolve_model(args) -> tuple[str | None, str | None]:
     Returns ``(model_dir, name)``; either may stay None to keep the
     ``--model-dir`` / ``--name`` behaviour.
     """
+    from edge0 import models  # noqa: F401  (populates MODEL_REGISTRY)
+
     model = getattr(args, "model", None)
     if not model:
         return args.model_dir, args.name
@@ -112,6 +161,15 @@ def _strip_thinking(text: str) -> str:
     and chat commands show only the final answer unless ``--show-thinking``
     is given; the engine/server output is never modified.
     """
+    # Gemma 4 delimits private reasoning as a named channel. Remove every
+    # complete thought channel before applying the older Qwen response split.
+    text = re.sub(
+        r"<\|channel>thought\s*\n.*?(?:<channel\|>|$)",
+        "",
+        text,
+        flags=re.DOTALL,
+    )
+    text = text.replace("<turn|>", "").strip()
     m = re.search(r"\n\s*response\b", text)
     if m:
         return text[m.end():].strip()
@@ -235,6 +293,7 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--prompt", default=None)
     p.add_argument("--max-new", type=int, default=None,
                    help="max tokens to generate (default: tier config)")
+    _add_context_size_argument(p)
     p.add_argument("--show-thinking", action="store_true",
                    help="print the model's reasoning block too")
     p.add_argument("--no-prerouter", action="store_true")
@@ -255,6 +314,7 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--prompt", default=None)
     p.add_argument("--max-new", type=int, default=None,
                    help="max tokens to generate (default: tier config)")
+    _add_context_size_argument(p)
     p.add_argument("--show-thinking", action="store_true",
                    help="print the model's reasoning block too")
     p.add_argument("--no-prerouter", action="store_true")
@@ -276,6 +336,7 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--port", type=int, default=8000)
     p.add_argument("--flask", action="store_true",
                    help="use the Flask transport (needs flask installed)")
+    _add_context_size_argument(p)
     p.add_argument("--no-prerouter", action="store_true")
     p.add_argument("--no-lora", action="store_true")
     p.add_argument("--history-slots", action="store_true",

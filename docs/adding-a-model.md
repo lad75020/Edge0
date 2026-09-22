@@ -2,7 +2,7 @@
 
 This document is a step-by-step guide for adding a new model family to edge0, using `edge0-35b` (`src/edge0/models/edge0_35b/__init__.py`) as the running example, with real code line numbers noted throughout. `edge0-8b` (`src/edge0/models/edge0_8b/__init__.py`) is a second live example; its path resolution and contract are identical.
 
-Integration goal: let `AutoConfig` / `AutoModel` / `AutoEngine` resolve your model by name (or by the `model_type` in the checkpoint's `config.json`), and have the streaming MoE layers driven by a common `StreamingSwitchGLU`.
+Integration goal: let `AutoConfig` / `AutoModel` / `AutoEngine` resolve your model by name (or by the `model_type` in the checkpoint's `config.json`). MoE adapters install streaming layers driven by a common `StreamingSwitchGLU`; dense adapters use a dedicated resident engine and leave the streaming configuration disabled.
 
 ## Integration overview (the contract)
 
@@ -12,7 +12,7 @@ The contract of `edge0.registry` is: **one adapter module exposes three things**
 - `build_model(model_dir, **overrides)` — the assembled model skeleton;
 - `build_engine(model_dir, **overrides)` — a generation-capable engine.
 
-`register_model(name, adapter)` performs the registration; `TYPE_ALIASES` maps a checkpoint's `model_type` to a registered name. See `_resolve_name` (registry.py:43) and `AutoConfig.from_pretrained` (registry.py:87).
+`register_model(name, adapter)` performs the registration; `TYPE_ALIASES` maps a checkpoint's `model_type` to a registered name. When two tiers intentionally preserve the same upstream model type, an optional top-level `edge0_model_name` marker in `config.json` disambiguates path-based resolution. See `_resolve_name` and `AutoConfig.from_pretrained` in `registry.py`.
 
 ## Step 1: Create the adapter module and directory
 
@@ -26,8 +26,9 @@ Create a package under `src/edge0/models/` named after your tier, e.g. `edge0_35
 | --- | --- | --- |
 | `name` | `str` | registered name |
 | `model_dir` | `str` | checkpoint directory |
-| `moe_spec` | `MoESpec` | MoE spec (see moe.md) |
-| `options` | `LayerOptions` | streaming layer options |
+| `moe_spec` | `MoESpec \| None` | MoE spec (see moe.md); `None` for dense models |
+| `options` | `LayerOptions \| None` | streaming layer options; `None` for dense models |
+| `dense_spec` | `DenseSpec \| None` | dense shape and quantization metadata; `None` for MoE models |
 | `prerouter` | `PrerouterSpec \| None` | prerouter head spec |
 | `prerouter_top_k` | `int` | prerouter width (0 → use `options.top_k`) |
 | `lora` / `lora_r` / `lora_alpha` | `str` / `int` / `float` | LoRA weight path and hyperparameters (`""` disables) |
@@ -70,6 +71,25 @@ def build_engine(model_dir=None, **overrides):
 
 If your model family's math differs (e.g. edge0-8b's `SIGMOID_GROUP` + hybrid MLA), write a matching engine under `src/edge0/engine/` (model it on `engine/qwen.py` / `engine/ling.py`) and reference it from `build_model` / `build_engine`. `load_installed` assembles the streaming twins / LoRA / prerouter; it is the construction path the framework provides to engines.
 
+For a dense checkpoint, set `moe_spec=None`, `options=None`, and keep prerouter, LoRA, and streaming/prefetch fields disabled. Its dedicated engine should load the resident model implementation directly and subclass `Edge0Engine` so it reuses the common prefill, decode, and generation loops. Do not call `load_installed`, `open_shards`, or `install_streaming_experts` for a dense model.
+
+If the upstream checkpoint is multimodal but Edge0 only implements its text
+path, make that boundary explicit in the adapter and model documentation. The
+vendored top-level model should instantiate only supported modules, and its
+`sanitize` method must drop unsupported modality tensors before a strict load
+while preserving or normalizing every supported text-key layout. Do not imply
+that image input works until it is wired through the public Edge0 APIs and
+covered by an end-to-end test.
+
+When that boundary requires an on-disk checkpoint transform, keep tensor
+selection generic (explicit prefixes supplied by the model-specific preparer),
+rewrite affected safetensors shards and their index coherently, recompute
+`metadata.total_size`, and make the transform idempotent. A fresh-download
+path should avoid checkpoint-sized backups; a manual transform should retain
+recoverable backups by default. If the upstream tokenizer omits a required
+chat template, install an attributed local template during the same
+preparation step so serving never needs network access.
+
 ## Step 4: Register with the registry
 
 At the end of the file, call `register_model` and expose `Config` as a module attribute (required by the contract):
@@ -97,13 +117,13 @@ TYPE_ALIASES = {
 }
 ```
 
-The lookup order of `_resolve_name` (registry.py:42–56): explicit `name` → the directory's `model_type` (`_model_type_from_dir` reads `config.json`, falling back to the directory basename on failure) → match against `MODEL_REGISTRY` → match against `TYPE_ALIASES` → otherwise a `KeyError` listing the registered models. Unknown names are pinned by tests through assertions such as `test_unknown_name_lists_registry`.
+The lookup order of `_resolve_name` is: explicit `name` → the directory's optional top-level `edge0_model_name` → its `model_type` → the directory basename → match against `MODEL_REGISTRY` / `TYPE_ALIASES` → otherwise a `KeyError` listing the registered models. The marker takes precedence over `model_type`; checkpoints without it preserve the original fallback behavior. Use the marker only for an Edge0-prepared checkpoint whose generic upstream model type would otherwise collide, and keep the upstream `model_type` unchanged for loader compatibility. Unknown names are pinned by tests through assertions such as `test_unknown_name_lists_registry`.
 
 ## Model directory layout requirements
 
-`AutoConfig.from_pretrained(model_dir=...)` reads the `model_type` field of `model_dir/config.json` (`registry.py:58–70`). The checkpoint directory must therefore at least satisfy:
+`AutoConfig.from_pretrained(model_dir=...)` reads `model_dir/config.json`, preferring `edge0_model_name` when present and otherwise using `model_type`. The checkpoint directory must therefore at least satisfy:
 
-- `config.json` exists, and its `model_type` is registered (or covered by your `TYPE_ALIASES`);
+- `config.json` exists, and either its optional `edge0_model_name` is registered or its `model_type` is registered (or covered by `TYPE_ALIASES`);
 - the weights are in safetensors format, with key prefixes matching `moe_spec.key_template` (e.g. `language_model.model.layers.N.mlp.switch_mlp`);
 - the LoRA / prerouter weights are `.safetensors` files carrying metadata (see the comment at the top of `models/base.py`: they are converted one-shot from the training npz by `convert_adapters_legacy.py`).
 
@@ -165,5 +185,6 @@ Config = MyConfig
 
 - `src/edge0/registry.py` — the registry + the Auto trio
 - `src/edge0/models/base.py` — `ModelConfig` / `from_pretrained` / artifact resolution
-- `src/edge0/models/edge0_35b/__init__.py`, `edge0_8b/__init__.py` — the two live examples
+- `src/edge0/models/edge0_35b/__init__.py`, `edge0_8b/__init__.py` — sparse examples
+- `src/edge0/models/qwen3_8_27b_mlx/__init__.py`, `muse_glimmer_30b_mlx/__init__.py`, `gemma4_31b_mlx/__init__.py` — resident dense examples
 - `tests/test_registry.py`, `tests/test_moe_spec.py` — behavior examples
